@@ -1,0 +1,206 @@
+---
+title: "Placental Cell Type Deconvolution Benchmarking"
+author: "Joseph Burke"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+1. Environment Setup
+We load the necessary libraries for data manipulation, GEO access, and deconvolution algorithms.
+
+```{r}
+
+
+library(devtools)
+library(MuSiC)
+library(Biobase)
+library(SingleCellExperiment) 
+library(reshape2)
+library(ggplot2)
+library(cowplot)
+library(MuSiC)
+library(BisqueRNA)
+library(anndata)
+library(GEOquery)
+library(Biobase)
+library(tidyverse)
+library(SingleCellExperiment)
+library(Matrix)
+library(Seurat)
+```
+
+
+2. Data Acquisition
+2.1 Load Single-Cell Reference (CellxGene)
+We use the .h5ad file from the CellxGene portal as our single-cell reference. This contains the "ingredients" needed to understand the bulk signature.
+
+
+2.2 Load Bulk Transcriptomics (GEO)
+We fetch the bulk RNA-seq data from GSE174399.
+
+
+```{r}
+h5ad_path <- r"(C:\Users\Joseph Burke\Downloads\placenta_data.h5ad)"
+
+sc_ref <- read_h5ad(h5ad_path, backed = "r")
+```
+
+
+```{r}
+gse <- getGEO("GSE174399", destdir = ".")
+bulk_mtx <- exprs(gse[[1]])
+rownames(bulk_mtx) <- gsub("\\..*", "", rownames(bulk_mtx))
+```
+
+
+
+
+```{r}
+target_indices <- which(sc_ref$obs$infection == "uninfected")
+
+common_genes <- intersect(rownames(sc_ref$var), rownames(bulk_mtx))
+```
+
+
+```{r}
+metadata <- as.data.frame(sc_ref$obs)
+cell_types <- unique(metadata$cell_type)
+
+# Create an empty matrix to store averages
+sig_matrix <- matrix(0, nrow = length(common_genes), ncol = length(cell_types))
+rownames(sig_matrix) <- common_genes
+colnames(sig_matrix) <- cell_types
+
+# Loop through each cell type and get the average expression
+# This pulls data in tiny chunks so your RAM never fills up
+for(ct in cell_types){
+  idx <- which(metadata$cell_type == ct & metadata$infection == "uninfected")
+  
+  # Pull only 100 cells per type to be safe, or all if less than 100
+  sub_idx <- if(length(idx) > 100) sample(idx, 100) else idx
+  
+  # Pulling tiny chunk
+  chunk <- as.matrix(t(sc_ref$X[sub_idx, common_genes]))
+  sig_matrix[, ct] <- rowMeans(chunk)
+}
+
+print("Signature Matrix Created Successfully!")
+```
+```{r}
+set.seed(42) # For reproducibility
+sampled_indices <- sample(uninfected_indices, 5000)
+
+```
+
+
+
+
+
+3. Data Harmonization
+Deconvolution requires the Single-Cell and Bulk data to share the same Gene Symbols/IDs.
+
+```{r}
+common_genes <- intersect(rownames(sc_mtx_sparse), rownames(bulk_counts))
+print(paste("Number of overlapping genes:", length(common_genes)))
+
+# Subset both matrices to the common gene set
+sc_mtx_final <- sc_mtx_sparse[common_genes, ]
+bulk_mtx_final <- as.matrix(bulk_counts[common_genes, ])
+```
+4. Deconvolution Benchmarking
+4.1 MuSiC
+MuSiC uses multi-subject single-cell expression as a reference to account for subject-to-subject variation.
+
+```{r}
+# Create a SingleCellExperiment or ExpressionSet for MuSiC
+# MuSiC needs: bulk matrix, sc matrix, sc clusters, and sc individual IDs
+
+
+# 1. Create the SCE object instead of ExpressionSet
+# 'counts' must be the sparse matrix we created
+sc_sce <- SingleCellExperiment(
+    assays = list(counts = sc_mtx), 
+    colData = sc_obs
+)
+
+# 2. MuSiC can now use this SCE object directly
+# MuSiC uses the 'counts' assay by default
+decon_music <- music_prop(
+    bulk.mtx = bulk_mtx, 
+    sc.sce = sc_sce, 
+    clusters = 'cell_type', 
+    samples = 'donor_id'
+)
+
+
+
+# sc_eset <- ExpressionSet(assayData = sc_mtx, 
+#                          phenoData = AnnotatedDataFrame(sc_normal$obs))
+# 
+# # Run MuSiC
+# decon_music <- music_prop(bulk.mtx = bulk_mtx, 
+#                           sc.sce = sc_eset, 
+#                           clusters = 'cell_type', # Verify this column name in sc_normal$obs
+#                           samples = 'donor_id')   # Verify this column name in sc_normal$obs
+# 
+# head(decon_music$Est.prop.weighted)
+```
+
+4.2 Bisque
+Bisque utilizes a reference-based approach that is particularly robust to technical biases between bulk and single-cell sequencing.
+
+```{r}
+# Bisque requires ExpressionSet objects
+bulk_eset <- ExpressionSet(assayData = bulk_mtx)
+
+decon_bisque <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset = bulk_eset, 
+                                                       sc.eset = sc_eset, 
+                                                       use.overlap = FALSE)
+
+head(t(decon_bisque$bulk.props))
+```
+4.3 CIBERSORTx (Note)
+CIBERSORTx is typically run as a web-based containerized tool. To prepare for it, we export the signature matrix and bulk matrix.
+
+```{r}
+# Exporting files for CIBERSORTx web portal
+write.table(bulk_mtx, "bulk_for_cibersort.txt", sep="\t", quote=F, col.names=NA)
+
+# For the signature, we usually provide the raw SC counts and a pheno class file
+# or a pre-calculated signature matrix.
+```
+5. Comparison & Visualization
+Comparing the predicted proportions across different methods.
+
+```{r}
+# Example logic for comparing one sample's results
+# music_res <- decon_music$Est.prop.weighted[1,]
+# bisque_res <- decon_bisque$bulk.props[,1]
+
+
+# You can create a grouped bar plot here to show how cell type estimates
+# vary between MuSiC and Bisque for the same placental samples.
+
+```
+
+## Key Improvements Made:
+
+1.  **Deduplication:** You were loading the GEO data and extracting the matrix three separate times. I've consolidated this into a single, clean step.
+2.  **AnnData Handling:** In R, `anndata` objects are transposed relative to standard R expression matrices. I added `t(as.matrix(sc_normal$X))` to ensure genes are rows and cells are columns, which is what `MuSiC` and `Bisque` expect.
+3.  **Gene Version Cleaning:** GEO data (like GSE174399) often uses Ensembl IDs with version numbers (e.g., `ENSG000001.12`). If your single-cell data uses raw IDs (`ENSG000001`), they won't match. I added a `gsub` line to fix this.
+4.  **Metadata Awareness:** I added placeholders for `cell_type` and `donor_id`. You must check `colnames(sc_normal$obs)` to ensure the strings match your actual metadata columns exactly.
+5.  **Output Formatting:** Added a YAML header with a Table of Contents (`toc`) and a theme to make your final report look professional.
+
+**Important Note on CIBERSORTx:** CIBERSORTx is not a standard R library you can `install.packages()`. It is either run via their [website](https://cibersortx.stanford.edu/) or via a Docker container. I have included the code to export your matrices so you can upload them to the portal.
+
+Does the `sc_normal$obs` table contain a column for "cell_type" and "donor_id," or are t
