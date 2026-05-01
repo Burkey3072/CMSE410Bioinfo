@@ -1,0 +1,162 @@
+---
+title: "cmse410"
+author: "Joseph Burke"
+date: "2026-02-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+#install.packages("devtools")
+devtools::install_github("xuranw/MuSiC")
+install.packages("BisqueRNA")
+library(BisqueRNA)
+library(MuSiC)
+if (!require("anndata", quietly = TRUE)) install.packages("anndata")
+library(anndata)
+if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::install("GEOquery")
+
+library(GEOquery)
+
+```
+
+```{r}
+path <- r"(C:\Users\Joseph Burke\Downloads\placenta_data.h5ad)"
+sc_ref <- read_h5ad(path)
+
+
+# Download the series information
+gse_data <- getGEO("GSE174399", destdir = ".")
+
+```
+
+
+
+```{r}
+# 3. Quick check of the data structure
+print(sc_ref)
+
+# Extract the expression matrix (The "Smoothie")
+bulk_smoothie <- exprs(gse_data[[1]])
+
+# Check it
+head(bulk_smoothie[, 1:5])
+
+# After loading sc_ref with anndata
+# The 'obs' slot contains the metadata
+table(sc_ref$obs$infection) 
+
+# This should show a 'control' or 'uninfected' group of ~74,585 cells
+
+# 1. Unpack the list (gse is usually the object name from your getGEO command)
+# If you used: gse <- getGEO("GSE174399"), then:
+gse_object <- gse[[1]]
+
+# 2. Extract the Bulk Counts (The "Smoothie")
+bulk_counts <- exprs(gse_object)
+
+# 3. Extract the Metadata (The "Flavor Profile" - i.e., which sample is e7.5 vs e9.5)
+bulk_metadata <- pData(gse_object)
+
+# 4. Peek at your data
+head(bulk_counts[, 1:5])
+table(bulk_metadata$title) # This shows you how many samples you have of each type
+```
+
+```{r}
+# 1. Unpack the list (gse is usually the object name from your getGEO command)
+# If you used: gse <- getGEO("GSE174399"), then:
+gse_object <- gse[[1]]
+
+# 2. Extract the Bulk Counts (The "Smoothie")
+bulk_counts <- exprs(gse_object)
+
+# 3. Extract the Metadata (The "Flavor Profile" - i.e., which sample is e7.5 vs e9.5)
+bulk_metadata <- pData(gse_object)
+
+# 4. Peek at your data
+head(bulk_counts[, 1:5])
+table(bulk_metadata$title) # This shows you how many samples you have of each type
+```
+
+
+```{r}
+# 1. Unpack the GEO list correctly
+gse_object <- gse_data[[1]] 
+
+# 2. Extract the Bulk Counts (The "Smoothie")
+bulk_counts <- exprs(gse_object)
+
+# 3. Extract the Metadata
+bulk_metadata <- pData(gse_object)
+
+# 4. Filter the Single-Cell Reference for 'Normal' cells
+# We only want the control cells to act as our 'unmixed' reference
+
+
+# Find common genes
+common <- intersect(sc_genes, bulk_genes)
+
+print(paste("Number of overlapping genes:", length(common)))
+
+# If this number is low (e.g., < 100), we need to convert IDs.
+
+# Check what the actual names are
+print(unique(sc_ref$obs$infection))
+
+# Switch to the correct label (usually 'uninfected' in this specific dataset)
+# Or use the 'disease' column which usually says 'normal' or 'Patsy'
+
+
+# If that still fails, try filtering by the 'disease' column
+# sc_normal <- sc_ref[sc_ref$obs$disease == "normal", ]
+
+print(paste("Number of Normal Cells:", nrow(sc_normal$obs)))
+
+# Use the direct accessors for AnnData objects in R
+sc_genes <- as.character(sc_normal$var_names)
+bulk_genes <- rownames(bulk_counts)
+
+# Find common genes
+common <- intersect(sc_genes, bulk_genes)
+print(paste("Number of overlapping genes:", length(common)))
+
+# --- CHUNK: Filtering ---
+# Use 'uninfected' or 'normal' based on the Hoo et al. metadata
+# Let's assume 'uninfected' for now, but check table(sc_ref$obs$infection)
+sc_normal <- sc_ref[sc_ref$obs$infection == "uninfected", ]
+
+# Verify count
+print(paste("Number of Normal Cells:", nrow(sc_normal)))
+
+# --- CHUNK: Overlap & Matrix Prep ---
+# Extract names safely
+sc_genes <- as.character(sc_normal$var_names)
+bulk_genes <- rownames(bulk_counts)
+
+common <- intersect(sc_genes, bulk_genes)
+print(paste("Number of overlapping genes:", length(common)))
+
+# IMPORTANT: MuSiC and Bisque need a matrix, not a 'double' object
+# We convert the sparse matrix to a standard matrix for the overlapping genes
+sc_matrix <- as.matrix(t(sc_normal$X)) # Transpose because AnnData is Cells x Genes
+sc_matrix <- sc_matrix[common, ]
+
+```
+
+
+```{r}
+# This command automatically finds and downloads the Series Matrix for you
+gse_data <- getGEO("GSE174399", destdir = ".")
+
+# This extracts the 'Smoothie' matrix from that file
+bulk_counts <- exprs(gse_data[[1]])
+
+head(bulk_counts)
+```
+
