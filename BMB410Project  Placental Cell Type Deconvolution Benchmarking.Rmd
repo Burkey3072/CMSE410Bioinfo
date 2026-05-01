@@ -1,0 +1,121 @@
+---
+title: "BMB410Project  Placental Cell Type Deconvolution Benchmarking"
+author: "Joseph Burke"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+2. Environment Setup
+We load the necessary libraries for data manipulation, GEO access, and deconvolution algorithms.
+
+
+```{r Environment Setup}
+library(anndata)              # Handling H5AD files [cite: 101]
+library(Biobase)              # Base functions for Bioconductor [cite: 119]
+library(BiocManager)          # Bioconductor package manager
+library(BisqueRNA)            # Transformation-based alignment [cite: 327]
+library(cowplot)              # Publication-ready ggplot2 themes
+library(devtools)             # Software development tools
+library(GEOquery)             # Bulk data retrieval [cite: 94]
+library(ggplot2)              # Data visualization
+library(Matrix)               # Sparse matrix handling [cite: 116]
+library(MuSiC)                # Weight-based deconvolution [cite: 158]
+library(reshape2)             # Data restructuring
+library(scuttle)              # Single-cell analysis utilities
+library(Seurat)               # QC, analysis, and exploration of SC data [cite: 106]
+library(SingleCellExperiment) # Standardized SC container [cite: 98]
+library(tidyverse)            # Data wrangling and visualization
+
+# --- Environment & Memory Settings ---
+
+# Set memory options for large placental atlas (approx. 158k cells) [cite: 91, 153]
+options(future.globals.maxSize = 4000 * 1024^2) 
+
+# Sort objects in your environment by size to monitor RAM usage 
+sort(sapply(ls(), function(x) object.size(get(x))), decreasing = TRUE)
+```
+
+
+
+3.Data Preprocessing:Single-Cell: Transposing, downsampling, and metadata cleaning.  Bulk: Retrieving GEO data and harmonizing Gene IDs.
+Harmonize the Datasets
+I would focus on the "stay in your lane" rule for gene IDs. If the bulk data uses versioned Ensembl IDs (e.g., .12), they must be stripped to match the reference.
+
+```{r}
+# Load Bulk Data (GSE174399) [cite: 94]
+gse <- getGEO("GSE174399", destdir = ".")
+bulk_mtx <- exprs(gse[[1]])
+# Clean version numbers to ensure intersection with SC reference 
+rownames(bulk_mtx) <- gsub("\\..*", "", rownames(bulk_mtx))
+
+# Load SC Reference (CELLxGENE Atlas) [cite: 90, 152]
+sc_ref <- read_h5ad("placenta_data.h5ad")
+# Essential: Transpose because AnnData is Cells x Genes, R expects Genes x Cells 
+sc_mtx <- t(as.matrix(sc_ref$X))
+```
+
+
+
+4.Deconvolution Implementation: Separate sections for MuSiC, Bisque, and CIBERSORTx export.
+
+
+Implement MuSiC (Weight-Based)
+MuSiC is my choice for stability because it uses donor-to-donor variation to find the most "consistent" genes.
+
+```{r}
+# Create SCE object for MuSiC [cite: 170]
+sc_sce <- SingleCellExperiment(assays = list(counts = sc_mtx), colData = sc_ref$obs)
+
+# Run deconvolution
+# Prioritize 'cell_type' and 'donor_id' to account for subject heterogeneity [cite: 170, 367]
+decon_music <- music_prop(
+    bulk.mtx = bulk_mtx, 
+    sc.sce = sc_sce, 
+    clusters = 'cell_type', 
+    samples = 'donor_id'
+)
+```
+
+
+Implement Bisque (Transformation-Based)
+Bisque is the best choice for cross-platform alignment. I would implement this to see how it handles technical noise between the 10x reference and the bulk target.
+
+```{r}
+# Convert to ExpressionSet for Bisque [cite: 121, 352]
+sc_eset <- ExpressionSet(assayData = sc_mtx, phenoData = AnnotatedDataFrame(as.data.frame(sc_ref$obs)))
+bulk_eset <- ExpressionSet(assayData = bulk_mtx)
+
+# Execute cross-platform bias alignment [cite: 328]
+decon_bisque <- ReferenceBasedDecomposition(bulk.eset = bulk_eset, sc.eset = sc_eset)
+```
+
+
+5.Comparative Analysis: Statistical evaluation using Spearman Correlation ($\rho$) and RMSE. Statistical Assessment
+Finally, I would benchmark the Compositional Accuracy by correlating these results with known placental biology—specifically looking for the expected >45% Trophoblast signal in villous tissue
+
+```{r}
+# Calculate Spearman Correlation for benchmarking [cite: 401]
+# Compare MuSiC results to biological expectations [cite: 522]
+cor_music <- cor(decon_music$Est.prop.weighted[, "Trophoblast"], 
+                 expected_trends, method = "spearman")
+```
+
+
+
+
+6.Visualizations: Multi-panel plots comparing predicted proportions against biological expectations.
+
+
+
+
+7.

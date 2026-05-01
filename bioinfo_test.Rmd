@@ -1,0 +1,303 @@
+---
+title: "TEST"
+author: "Joseph Burke"
+date: "2026-04-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r}
+# Sort objects in your environment by size
+sort(sapply(ls(), function(x) object.size(get(x))), decreasing = TRUE)
+library(devtools)
+library(MuSiC)
+library(Biobase)
+library(SingleCellExperiment) 
+library(reshape2)
+library(ggplot2)
+library(cowplot)
+library(SingleCellExperiment)
+library(scuttle)
+library(devtools)
+library(MuSiC)
+library(Biobase)
+library(SingleCellExperiment) 
+library(reshape2)
+library(ggplot2)
+library(cowplot)
+library(MuSiC)
+library(BisqueRNA)
+library(anndata)
+library(GEOquery)
+library(Biobase)
+library(tidyverse)
+library(SingleCellExperiment)
+library(Matrix)
+library(Seurat)
+library(BiocManager)
+
+```
+
+```{r}
+# Define a helper function to download and read to save space
+get_music_data <- function(file_name) {
+  url <- paste0("https://xuranw.github.io/MuSiC/data/", file_name)
+  if(!file.exists(file_name)) {
+    download.file(url, destfile = file_name, mode = "wb")
+  }
+  return(readRDS(file_name))
+}
+
+ # Load the datasets
+GSE50244.bulk.eset <- get_music_data("GSE50244bulkeset.rds")
+XinT2D.sce         <- get_music_data("XinT2Dsce.rds")
+EMTAB.sce          <- get_music_data("EMTABsce_healthy.rds")
+
+# If you specifically need the ESet versions mentioned in your code:
+XinT2D.eset      <- get_music_data("XinT2Deset.rds")
+EMTAB.eset       <- get_music_data("EMTABesethealthy.rds")
+```
+
+```{r}
+# # Increase timeout to 2 hours for a 4GB file
+# options(timeout = 7200)
+# 
+# # HTTPS links (replacing FTP)
+# counts_url <- "https://www.ebi.ac.uk/biostudies/files/E-MTAB-6701/raw_data_10x.txt"
+# meta_url <- "https://www.ebi.ac.uk/biostudies/files/E-MTAB-6701/meta_10x.txt"
+# 
+# # Download the files
+# message("Starting download... this may take a while.")
+# download.file(meta_url, destfile = "meta_10x.txt", method = "libcurl")
+# #download.file(counts_url, destfile = "raw_data_10x.txt", method = "libcurl")
+```
+
+
+
+
+```{r}
+
+GSE50244.bulk.eset
+XinT2D.sce
+EMTAB.sce
+XinT2D.eset
+EMTAB.eset
+
+```
+
+
+
+```{r}
+bulk.mtx = exprs(GSE50244.bulk.eset)
+bulk.meta = exprs(GSE50244.bulk.eset)
+```
+
+```{r}
+# Bulk expression matrix
+bulk.mtx = exprs(GSE50244.bulk.eset)
+sc.eset = exprs(EMTAB.eset)
+sc.sce = EMTAB.sce
+
+?music_prop
+
+# Estimate cell type proportions
+Est.prop.GSE50244 = music_prop(
+  bulk.mtx = bulk.mtx, 
+  sc.sce = EMTAB.sce,            # Change this from sc.eset to sc.sce
+  clusters = 'cellType', 
+  samples = 'sampleID', 
+  select.ct = c('alpha', 'beta', 'delta', 'gamma', 'acinar', 'ductal'), 
+  verbose = FALSE
+)
+
+# 3. Check the results
+names(Est.prop.GSE50244)
+#[1] "Est.prop.weighted" "Est.prop.allgene"  "Weight.gene"       "r.squared.full"    "Var.prop"  
+```
+
+```{r}
+# Jitter plot of estimated cell type proportions
+jitter.fig = Jitter_Est(list(data.matrix(Est.prop.GSE50244$Est.prop.weighted),
+                             data.matrix(Est.prop.GSE50244$Est.prop.allgene)),
+                        method.name = c('MuSiC', 'NNLS'), title = 'Jitter plot of Est Proportions')
+
+# A more sophisticated jitter plot is provided as below. We seperated the T2D subjects and normal 
+#subjects by their HbA1c levels.
+
+m.prop.GSE50244 = rbind(melt(Est.prop.GSE50244$Est.prop.weighted), 
+                        melt(Est.prop.GSE50244$Est.prop.allgene))
+
+colnames(m.prop.GSE50244) = c('Sub', 'CellType', 'Prop')
+m.prop.GSE50244$CellType = factor(m.prop.GSE50244$CellType, levels = c('alpha', 'beta', 'delta', 'gamma', 'acinar', 'ductal'))
+m.prop.GSE50244$Method = factor(rep(c('MuSiC', 'NNLS'), each = 89*6), levels = c('MuSiC', 'NNLS'))
+m.prop.GSE50244$HbA1c = rep(GSE50244.bulk.eset$hba1c, 2*6)
+m.prop.GSE50244 = m.prop.GSE50244[!is.na(m.prop.GSE50244$HbA1c), ]
+m.prop.GSE50244$Disease = factor(c('Normal', 'T2D')[(m.prop.GSE50244$HbA1c > 6.5)+1], levels = c('Normal', 'T2D'))
+m.prop.GSE50244$D = (m.prop.GSE50244$Disease == 'T2D')/5
+m.prop.GSE50244 = rbind(subset(m.prop.GSE50244, Disease == 'Normal'), subset(m.prop.GSE50244, Disease != 'Normal'))
+
+jitter.new = ggplot(m.prop.GSE50244, aes(Method, Prop)) + 
+  geom_point(aes(fill = Method, color = Disease, stroke = D, shape = Disease), 
+             size = 2, alpha = 0.7, position = position_jitter(width=0.25, height=0)) +
+  facet_wrap(~ CellType, scales = 'free') + scale_colour_manual( values = c('white', "gray20")) +
+  scale_shape_manual(values = c(21, 24))+ theme_minimal()
+
+plot_grid(jitter.fig, jitter.new, labels = 'auto')
+```
+
+
+```{r}
+# Create dataframe for beta cell proportions and HbA1c levels
+m.prop.ana = data.frame(pData(GSE50244.bulk.eset)[rep(1:89, 2), c('age', 'bmi', 'hba1c', 'gender')],
+                        ct.prop = c(Est.prop.GSE50244$Est.prop.weighted[, 2], 
+                                    Est.prop.GSE50244$Est.prop.allgene[, 2]), 
+                        Method = factor(rep(c('MuSiC', 'NNLS'), each = 89), 
+                        levels = c('MuSiC', 'NNLS')))
+colnames(m.prop.ana)[1:4] = c('Age', 'BMI', 'HbA1c', 'Gender')
+m.prop.ana = subset(m.prop.ana, !is.na(HbA1c))
+m.prop.ana$Disease = factor( c('Normal', 'T2D')[(m.prop.ana$HbA1c > 6.5) + 1], c('Normal', 'T2D') )
+m.prop.ana$D = (m.prop.ana$Disease == 'T2D')/5
+
+ggplot(m.prop.ana, aes(HbA1c, ct.prop)) + 
+  geom_smooth(method = 'lm',  se = FALSE, col = 'black', lwd = 0.25) +
+  geom_point(aes(fill = Method, color = Disease, stroke = D, shape = Disease), size = 2, alpha = 0.7) +  facet_wrap(~ Method) + 
+  ggtitle('HbA1c vs Beta Cell Type Proportion') + theme_minimal() + 
+  scale_colour_manual( values = c('white', "gray20")) + 
+  scale_shape_manual(values = c(21, 24))
+```
+
+
+```{r}
+lm.beta.MuSiC = lm(ct.prop ~ HbA1c + Age + BMI + Gender, data = subset(m.prop.ana, Method == 'MuSiC'))
+lm.beta.NNLS = lm(ct.prop ~ HbA1c + Age + BMI + Gender, data = subset(m.prop.ana, Method == 'NNLS'))
+summary(lm.beta.MuSiC)
+#
+#Call:
+#lm(formula = ct.prop ~ HbA1c + Age + BMI + Gender, data = subset(m.prop.ana, 
+#    Method == "MuSiC"))
+#
+#Residuals:
+#     Min       1Q   Median       3Q      Max 
+#-0.27768 -0.13186 -0.01096  0.10661  0.35790 
+#
+#Coefficients:
+#              Estimate Std. Error t value Pr(>|t|)    
+#(Intercept)   0.877022   0.190276   4.609 1.71e-05 ***
+#HbA1c        -0.061396   0.025403  -2.417   0.0182 *  
+#Age           0.002639   0.001772   1.489   0.1409    
+#BMI          -0.013620   0.007276  -1.872   0.0653 .  
+#GenderFemale -0.079874   0.039274  -2.034   0.0457 *  
+#---
+#Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+#
+#Residual standard error: 0.167 on 72 degrees of freedom
+#Multiple R-squared:  0.2439,   Adjusted R-squared:  0.2019 
+#F-statistic: 5.806 on 4 and 72 DF,  p-value: 0.0004166
+
+summary(lm.beta.NNLS)
+#
+#Call:
+#lm(formula = ct.prop ~ HbA1c + Age + BMI + Gender, data = subset(m.prop.ana, 
+#    Method == "NNLS"))
+#
+#Residuals:
+#     Min       1Q   Median       3Q      Max 
+#-0.04671 -0.02918 -0.01795  0.01394  0.19362 
+#
+#Coefficients:
+#               Estimate Std. Error t value Pr(>|t|)  
+#(Intercept)   0.0950960  0.0546717   1.739   0.0862 .
+#HbA1c        -0.0093214  0.0072991  -1.277   0.2057  
+#Age           0.0005268  0.0005093   1.035   0.3044  
+#BMI          -0.0015116  0.0020906  -0.723   0.4720  
+#GenderFemale -0.0037650  0.0112844  -0.334   0.7396  
+#---
+#Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+#
+#Residual standard error: 0.04799 on 72 degrees of freedom
+#Multiple R-squared:  0.0574,   Adjusted R-squared:  0.005028 
+#F-statistic: 1.096 on 4 and 72 DF,  p-value: 0.3651
+```
+
+
+```{r}
+# Extract expression matrix from the ExpressionSet
+bulk_matrix <- exprs(GSE50244.bulk.eset)
+
+# CIBERSORTx needs the Gene Symbol as a column, not just rownames
+bulk_df <- data.frame(GeneSymbol = rownames(bulk_matrix), bulk_matrix)
+
+# Export as tab-delimited text
+write.table(bulk_df, file = "GSE50244_Mixture.txt", 
+            sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```{r}
+
+# Use XinT2D or EMTAB
+sce_ref <- XinT2D.sce 
+
+# 1. Get the counts (normalized counts/CPM are preferred)
+sc_counts <- as.matrix(logcounts(sce_ref)) 
+
+# 2. Get the cell type labels (Check your metadata column name, usually 'cell_type')
+cell_labels <- colData(sce_ref)$cell_type 
+
+# 3. Create the CIBERSORTx format: 
+# Row 1: "GeneSymbol", "CellType", "CellType", ...
+# Row 2: GeneName, Value, Value, ...
+sc_df <- data.frame(GeneSymbol = rownames(sc_counts), sc_counts)
+colnames(sc_df) <- c("GeneSymbol", cell_labels)
+
+# Export as tab-delimited text
+write.table(sc_df, file = "XinT2D_SC_Reference.txt", 
+            sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(data.table)
+
+# 1. Load your data
+# Assuming XinT2D.sce is already in your environment
+sce <- XinT2D.sce 
+
+# 2. Clean Cell Type Labels (Crucial: CIBERSORTx hates spaces)
+colData(sce)$cell_type <- gsub(" ", "_", colData(sce)$cell_type)
+
+# 3. Stratified Downsampling
+# We will pick a maximum of 200 cells per cell type to keep the file small
+set.seed(42) # For reproducibility
+cells_to_keep <- unlist(lapply(split(colnames(sce), sce$cell_type), function(x) {
+    sample(x, min(length(x), 200)) 
+}))
+
+sce_small <- sce[, cells_to_keep]
+
+# 4. Extract Counts (Use 'counts' or 'logcounts' depending on availability)
+# We use as.matrix() because CIBERSORTx needs a flat table
+sc_matrix <- as.matrix(counts(sce_small))
+
+# 5. Create the CIBERSORTx formatted Data Frame
+# Column 1 = GeneSymbol, Headers = Cell Type Labels
+export_df <- data.frame(GeneSymbol = rownames(sc_matrix), sc_matrix)
+colnames(export_df) <- c("GeneSymbol", colData(sce_small)$cell_type)
+
+# 6. Export to Tab-Delimited Text
+# This should result in a file well under 200MB
+write.table(export_df, 
+            file = "XinT2D_Ref_200MB.txt", 
+            sep = "\t", 
+            row.names = FALSE, 
+            quote = FALSE)
+
+message("Export complete! File size is approximately: ", 
+        round(file.size("XinT2D_Ref_200MB.txt") / 1024^2, 2), " MB")
+```
+
